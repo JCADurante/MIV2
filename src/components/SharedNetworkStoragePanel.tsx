@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { AppConfig, StorageMode, SharedPathCheckResult } from '../types';
-import { Network, HardDrive, FolderOpen, RefreshCw, CheckCircle2, AlertTriangle, ShieldCheck, Check, Clock, Wifi, Info, Zap, Server, Database } from 'lucide-react';
+import { Network, HardDrive, FolderOpen, RefreshCw, CheckCircle2, AlertTriangle, ShieldCheck, Check, Clock, Wifi, Info, Zap, Server, Database, BookOpen, HelpCircle } from 'lucide-react';
 import { tauriBridge } from '../services/tauriService';
 import { db } from '../services/db';
 import { realtimeSync } from '../services/realtimeSync';
 import { DatabaseHealthDiagnosticPanel } from './DatabaseHealthDiagnosticPanel';
+import { SharedFolderHelpModal } from './SharedFolderHelpModal';
 
 interface SharedNetworkStoragePanelProps {
   config: AppConfig;
@@ -29,6 +30,7 @@ export const SharedNetworkStoragePanel: React.FC<SharedNetworkStoragePanelProps>
   const [isSyncingNow, setIsSyncingNow] = useState(false);
   const [isPushingNow, setIsPushingNow] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   useEffect(() => {
     if (config.storageMode) setStorageMode(config.storageMode);
@@ -39,9 +41,22 @@ export const SharedNetworkStoragePanel: React.FC<SharedNetworkStoragePanelProps>
   }, [config]);
 
   const handleRunDiagnostics = async (pathToCheck?: string) => {
-    const target = pathToCheck || sharedPath.trim();
+    const rawPath = pathToCheck !== undefined ? pathToCheck : sharedPath;
+    const target = (rawPath || '').trim();
+    if (!target) {
+      setStatusMsg({
+        type: 'error',
+        text: 'Please enter a network folder path (e.g. \\\\192.168.1.100\\QA_ReferenceTracker_Shared\\ or Z:\\) before running diagnostics.'
+      });
+      return;
+    }
+
     setIsCheckingPath(true);
-    setStatusMsg(null);
+    setStatusMsg({
+      type: 'info',
+      text: `Testing network path accessibility: "${target}"...`
+    });
+
     try {
       const res = await db.checkSharedFolderPath(target);
       setCheckResult(res);
@@ -58,10 +73,21 @@ export const SharedNetworkStoragePanel: React.FC<SharedNetworkStoragePanelProps>
       } else {
         setStatusMsg({
           type: 'error',
-          text: res.errorMessage || 'Path diagnostic failed. Network directory unreachable.'
+          text: res.errorMessage || `Path diagnostic failed: Could not access "${target}". Check Windows Network Sharing settings.`
         });
       }
     } catch (err: any) {
+      const fallbackResult: SharedPathCheckResult = {
+        lastChecked: new Date().toISOString(),
+        syntaxValid: true,
+        folderAccessible: false,
+        canRead: false,
+        canWrite: false,
+        sharedDbFound: false,
+        status: 'ERROR',
+        errorMessage: err?.message || 'Network path unreachable. Please check host PC IP address and folder sharing permissions.'
+      };
+      setCheckResult(fallbackResult);
       setStatusMsg({
         type: 'error',
         text: `Diagnostic check failed: ${err?.message || 'Network unreachable'}`
@@ -180,8 +206,17 @@ export const SharedNetworkStoragePanel: React.FC<SharedNetworkStoragePanelProps>
           </div>
         </div>
 
-        {/* Live Network Status Badge */}
-        <div className="flex items-center gap-2 shrink-0">
+        {/* Live Network Status Badge & Guide Button */}
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setIsHelpOpen(true)}
+            className="px-3.5 py-1.5 rounded-xl border border-emerald-500/40 bg-emerald-950/40 hover:bg-emerald-900/50 text-emerald-300 text-xs font-bold transition-all flex items-center gap-1.5 shadow-xs"
+          >
+            <BookOpen className="w-3.5 h-3.5 text-emerald-400" />
+            <span>How to Link via Shared Folder Guide</span>
+          </button>
+
           {storageMode === 'SHARED_NETWORK' ? (
             <span className={`px-3 py-1.5 rounded-xl border text-xs font-mono font-bold flex items-center gap-1.5 ${
               checkResult?.status === 'CONNECTED'
@@ -429,9 +464,21 @@ export const SharedNetworkStoragePanel: React.FC<SharedNetworkStoragePanelProps>
                 </div>
 
                 {checkResult.errorMessage && (
-                  <p className="text-[11px] text-red-400 font-sans bg-red-950/40 p-2 rounded border border-red-500/30">
-                    ⚠️ {checkResult.errorMessage}
-                  </p>
+                  <div className="p-3 bg-red-950/40 rounded-lg border border-red-500/30 space-y-2">
+                    <p className="text-[11px] text-red-300 font-sans">
+                      ⚠️ <strong>Diagnostic Error:</strong> {checkResult.errorMessage}
+                    </p>
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsHelpOpen(true)}
+                        className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white text-[11px] font-bold rounded-lg transition-all flex items-center gap-1.5"
+                      >
+                        <BookOpen className="w-3 h-3" />
+                        <span>Open Step-by-Step Fix Guide for this Error</span>
+                      </button>
+                    </div>
+                  </div>
                 )}
 
                 {checkResult.sharedDbFound && checkResult.lastUpdatedByPC && (
@@ -558,6 +605,17 @@ export const SharedNetworkStoragePanel: React.FC<SharedNetworkStoragePanelProps>
       <DatabaseHealthDiagnosticPanel
         config={config}
         onRefreshData={onRefreshData}
+      />
+
+      {/* Interactive Step-by-Step Shared Folder Setup & Troubleshooting Guide Modal */}
+      <SharedFolderHelpModal
+        isOpen={isHelpOpen}
+        onClose={() => setIsHelpOpen(false)}
+        currentPath={sharedPath}
+        onApplyPresetPath={(p) => {
+          setSharedPath(p);
+          handleRunDiagnostics(p);
+        }}
       />
     </div>
   );

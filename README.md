@@ -67,6 +67,20 @@ npm run tauri:build:portable
 
 ---
 
+## 🌐 Multi-PC Shared Network Linking (2+ Workstations)
+
+The system supports multi-workstation real-time synchronization over a standard Windows Local Area Network (LAN / SMB) shared folder with zero dedicated server hardware.
+
+For full, step-by-step instructions with Windows screenshots, permissions configuration, and 1-click batch scripts, see **[README_SHARED_FOLDER.md](./README_SHARED_FOLDER.md)**.
+
+### Quick Setup Summary:
+1. **Host PC**: Create `C:\QA_ReferenceTracker_Shared`, enable Windows Network Discovery & File Sharing, set network profile to **Private**, and grant **Full Control** in both *Sharing Permissions* AND *NTFS Security*.
+2. **Client PC**: Connect to `\\<HOST_IP>\QA_ReferenceTracker_Shared\` via Windows Explorer (`Win + R`) or map it as network drive `Z:`.
+3. **In the App**: Go to **Admin Dashboard > Shared Sync**, switch to **"Shared Network Folder Mode"**, enter the path, click **Run Path Diagnostics**, and click **Push/Pull** to sync.
+4. **Automated Diagnostic & Lock Reset**: In **Admin Dashboard > Database Health**, run live diagnostics or 1-click connection resets.
+
+---
+
 ## 🤖 GitHub Actions CI/CD (Windows Portable EXE)
 
 The repository includes a dedicated GitHub Actions workflow in `.github/workflows/windows-portable.yml` specifically for Windows:

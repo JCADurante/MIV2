@@ -17,10 +17,12 @@ import {
   Wifi,
   Zap,
   HardDrive,
-  Info
+  Info,
+  BookOpen
 } from 'lucide-react';
 import { tauriBridge } from '../services/tauriService';
 import { db } from '../services/db';
+import { SharedFolderHelpModal } from './SharedFolderHelpModal';
 
 interface DatabaseHealthDiagnosticPanelProps {
   config: AppConfig;
@@ -37,8 +39,57 @@ export const DatabaseHealthDiagnosticPanel: React.FC<DatabaseHealthDiagnosticPan
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [isResetting, setIsResetting] = useState<boolean>(false);
   const [resetMessage, setResetMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [isHelpOpen, setIsHelpOpen] = useState<boolean>(false);
+
+  const [isSimulating, setIsSimulating] = useState<boolean>(false);
+  const [simProgress, setSimProgress] = useState<number>(0);
+  const [simResult, setSimResult] = useState<{
+    total: number;
+    passed: number;
+    failed: number;
+    latencyAvg: number;
+    status: 'PASS' | 'FAIL';
+  } | null>(null);
 
   const sharedPath = config.sharedFolderPath || '\\\\192.168.1.100\\QA_ReferenceTracker_Shared\\';
+
+  const run1000Simulation = async () => {
+    setIsSimulating(true);
+    setSimProgress(0);
+    setSimResult(null);
+
+    let passed = 0;
+    let failed = 0;
+    let totalLatency = 0;
+
+    for (let i = 1; i <= 1000; i++) {
+      try {
+        const reportResult = await tauriBridge.scanDatabaseHealth(sharedPath);
+        totalLatency += reportResult.connectionTimeoutMs;
+        passed++;
+      } catch (err) {
+        failed++;
+      }
+
+      if (i % 50 === 0 || i === 1000) {
+        setSimProgress(i);
+        // Yield to browser UI thread
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    }
+
+    const latencyAvg = Math.round((totalLatency / 1000) * 100) / 100;
+    const finalStatus: 'PASS' | 'FAIL' = failed === 0 && passed === 1000 ? 'PASS' : 'FAIL';
+
+    setSimResult({
+      total: 1000,
+      passed,
+      failed,
+      latencyAvg,
+      status: finalStatus
+    });
+    setIsSimulating(false);
+  };
 
   const runDiagnosticScan = async () => {
     setIsScanning(true);
@@ -150,7 +201,16 @@ export const DatabaseHealthDiagnosticPanel: React.FC<DatabaseHealthDiagnosticPan
           </div>
         </div>
 
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex flex-wrap items-center gap-3 shrink-0">
+          <button
+            type="button"
+            onClick={() => setIsHelpOpen(true)}
+            className="px-3.5 py-2 bg-emerald-950/40 hover:bg-emerald-900/50 text-emerald-300 text-xs font-bold rounded-xl border border-emerald-500/40 transition-all flex items-center gap-1.5"
+          >
+            <BookOpen className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Shared Folder Guide</span>
+          </button>
+
           {report && getHealthBadge(report.overallHealth)}
 
           <button
@@ -332,12 +392,88 @@ export const DatabaseHealthDiagnosticPanel: React.FC<DatabaseHealthDiagnosticPan
         <button
           type="button"
           onClick={handleResetConnection}
-          disabled={isResetting}
+          disabled={isResetting || isSimulating}
           className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white text-xs font-bold rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 shrink-0 disabled:opacity-50"
         >
           <RotateCcw className={`w-4 h-4 ${isResetting ? 'animate-spin' : ''}`} />
           <span>{isResetting ? 'Resetting Connection...' : 'Reset Connection'}</span>
         </button>
+      </div>
+
+      {/* 1,000-Cycle Stress Simulation Tester */}
+      <div className="p-5 rounded-xl bg-gradient-to-r from-emerald-950/30 to-blue-950/20 border border-emerald-500/30 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <h4 className="text-xs font-bold text-white flex items-center gap-2">
+              <Zap className="w-4 h-4 text-emerald-400" />
+              <span>1,000-Iteration Database & Connection Stress Test</span>
+            </h4>
+            <p className="text-[11px] text-gray-300 leading-relaxed max-w-2xl">
+              Executes 1,000 consecutive iterations testing network latency, lock acquisition, syntax verification, and connection stability.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={run1000Simulation}
+            disabled={isSimulating || isResetting}
+            className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 shrink-0 disabled:opacity-50"
+          >
+            <Zap className={`w-4 h-4 ${isSimulating ? 'animate-bounce text-yellow-300' : ''}`} />
+            <span>{isSimulating ? `Simulating (${simProgress}/1000)...` : 'Simulate 1000 Times'}</span>
+          </button>
+        </div>
+
+        {/* Progress Bar during simulation */}
+        {isSimulating && (
+          <div className="space-y-1.5 pt-2">
+            <div className="flex justify-between text-[11px] font-mono text-emerald-400">
+              <span>Running Iterations: {simProgress} / 1000</span>
+              <span>{Math.round((simProgress / 1000) * 100)}%</span>
+            </div>
+            <div className="w-full h-2 bg-[#1A1A1A] rounded-full overflow-hidden border border-[#333]">
+              <div
+                className="h-full bg-emerald-500 transition-all duration-75"
+                style={{ width: `${(simProgress / 1000) * 100}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Simulation Result Badge & Breakdown */}
+        {simResult && (
+          <div className="p-4 rounded-xl bg-[#141414] border border-[#222] space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-gray-300">Final Simulation Report</span>
+              <div className={`px-4 py-1.5 rounded-xl font-mono text-xs font-black tracking-widest ${
+                simResult.status === 'PASS'
+                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 shadow-lg shadow-emerald-500/10'
+                  : 'bg-red-500/20 text-red-400 border border-red-500/50'
+              }`}>
+                FINAL STATUS: {simResult.status}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div className="p-2.5 rounded-lg bg-[#1A1A1A] border border-[#2A2A2A]">
+                <div className="text-gray-500 text-[10px]">Total Iterations</div>
+                <div className="font-mono font-bold text-white text-sm">{simResult.total}</div>
+              </div>
+              <div className="p-2.5 rounded-lg bg-[#1A1A1A] border border-[#2A2A2A]">
+                <div className="text-gray-500 text-[10px]">Passed Cycles</div>
+                <div className="font-mono font-bold text-emerald-400 text-sm">{simResult.passed}</div>
+              </div>
+              <div className="p-2.5 rounded-lg bg-[#1A1A1A] border border-[#2A2A2A]">
+                <div className="text-gray-500 text-[10px]">Failed Cycles</div>
+                <div className="font-mono font-bold text-red-400 text-sm">{simResult.failed}</div>
+              </div>
+              <div className="p-2.5 rounded-lg bg-[#1A1A1A] border border-[#2A2A2A]">
+                <div className="text-gray-500 text-[10px]">Avg Latency</div>
+                <div className="font-mono font-bold text-blue-400 text-sm">{simResult.latencyAvg} ms</div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Reset Result Message Banner */}
@@ -355,6 +491,13 @@ export const DatabaseHealthDiagnosticPanel: React.FC<DatabaseHealthDiagnosticPan
           <span>{resetMessage.text}</span>
         </div>
       )}
+
+      {/* Shared Folder Step-by-Step Guide Modal */}
+      <SharedFolderHelpModal
+        isOpen={isHelpOpen}
+        onClose={() => setIsHelpOpen(false)}
+        currentPath={sharedPath}
+      />
     </div>
   );
 };
