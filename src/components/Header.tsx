@@ -29,6 +29,7 @@ import { NavigationTab, MasterItem, ReferenceRegistration } from '../types';
 import { MultiUserPresenceBadge } from './MultiUserPresenceBadge';
 import { userService, AppUser } from '../services/userService';
 import { LoginModal } from './LoginModal';
+import { AppConfig } from '../types';
 
 interface HeaderProps {
   currentTab?: NavigationTab;
@@ -46,6 +47,7 @@ interface HeaderProps {
   onSelectMasterItem?: (item: MasterItem) => void;
   onSelectRegistration?: (reg: ReferenceRegistration) => void;
   onNotify?: (title: string, message: string, type?: 'info' | 'success' | 'warning') => void;
+  config?: AppConfig;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -62,7 +64,8 @@ export const Header: React.FC<HeaderProps> = ({
   onSearchChange,
   onSelectMasterItem,
   onSelectRegistration,
-  onNotify
+  onNotify,
+  config
 }) => {
   const isDesktop = isTauri();
   const totalMaster = masterCount ?? totalMasterItems ?? 0;
@@ -298,7 +301,11 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
         {/* Top Header Row: Centered Large Title & Multi-user Presence */}
         <div className="py-3.5 border-b border-[#1A1A1A] flex flex-col md:flex-row items-center justify-between gap-3">
-          <div className="flex-1 hidden md:block"></div>
+          <div className="flex-1 hidden md:flex items-center gap-2">
+            <span className="text-[11px] font-mono text-gray-500 uppercase tracking-wider">
+              {isDesktop ? 'MIRMS Desktop v2.0' : 'MIRMS Web Client'}
+            </span>
+          </div>
           
           {/* Centered Large System Title */}
           <div className="flex flex-col items-center justify-center text-center">
@@ -307,8 +314,33 @@ export const Header: React.FC<HeaderProps> = ({
             </h1>
           </div>
 
-          {/* Right Status Badges */}
-          <div className="flex-1 hidden md:block"></div>
+          {/* Right Status Badges: Direct Database Mode Indicator */}
+          <div className="flex-1 hidden md:flex items-center justify-end gap-2">
+            {config?.storageMode === 'SHARED_NETWORK' && config?.sharedFolderPath ? (
+              <button
+                type="button"
+                onClick={() => handleTabClick('ADMIN_DASHBOARD')}
+                className="flex items-center gap-2 px-3 py-1.5 bg-emerald-950/40 border border-emerald-500/40 hover:border-emerald-400 text-emerald-300 rounded-xl text-xs font-mono transition-all group shadow-xs cursor-pointer"
+                title="Direct Read & Write Shared Network Database Active. Click to view sync settings."
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+                <span className="font-bold">Shared DB:</span>
+                <span className="text-gray-200 font-mono text-[11px] truncate max-w-[200px] group-hover:text-white">
+                  {config.sharedFolderPath}
+                </span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => handleTabClick('ADMIN_DASHBOARD')}
+                className="flex items-center gap-2 px-3 py-1.5 bg-[#181818] border border-[#2F2F2F] hover:border-gray-500 text-gray-300 rounded-xl text-xs font-mono transition-all cursor-pointer"
+                title="Local Database Mode (Beside EXE). Click to link to a Shared Folder."
+              >
+                <HardDrive className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                <span>Local DB (Beside EXE)</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Navigation Row: Primary Tabs, Admin Tab Dropdown, and Global Search Bar Beside Admin */}

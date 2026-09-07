@@ -133,7 +133,8 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = realtimeSync.subscribe((msg: SyncMessage) => {
       // If the message is a data mutation from another workstation
-      if (
+      const isMutation =
+        msg.type.startsWith('MUTATION_') ||
         [
           'MASTER_ITEM_CREATE',
           'MASTER_ITEM_UPDATE',
@@ -144,8 +145,9 @@ export default function App() {
           'CONFIG_UPDATE',
           'EXCEL_IMPORT',
           'DATA_RESTORE'
-        ].includes(msg.type)
-      ) {
+        ].includes(msg.type);
+
+      if (isMutation) {
         // Auto-refresh data silently in the background
         refreshAllData();
 
@@ -375,6 +377,7 @@ export default function App() {
           openDetailModal(reg);
         }}
         onNotify={addNotification}
+        config={config}
       />
 
       {/* Main Workspace Area */}

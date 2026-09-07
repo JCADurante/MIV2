@@ -1947,6 +1947,15 @@ class DatabaseService {
       this.syncTauri('save_app_config', this.config);
     }
 
+    const isSharedActive = this.config.storageMode === 'SHARED_NETWORK' || (this.config.sharedFolderSyncEnabled && !!this.config.sharedFolderPath);
+    if (isSharedActive) {
+      this.startSharedNetworkPolling();
+      // Silently sync / pull without blocking
+      this.pullFromSharedFolderNetwork(false).catch(console.warn);
+    } else if (this.sharedSyncPollingTimer) {
+      clearInterval(this.sharedSyncPollingTimer);
+    }
+
     realtimeSync.broadcastMutation('MUTATION_CONFIG_UPDATED', 'Settings', 'Updated application settings');
     this.notifyListeners();
   }
@@ -2495,18 +2504,22 @@ class DatabaseService {
   private isSyncingSharedNetwork = false;
   private lastSharedSyncTimestamp: string | null = null;
 
-  private triggerSharedNetworkAutoSave(): void {
+  private triggerSharedNetworkAutoSave(immediate = false): void {
     const isSharedActive = this.config.storageMode === 'SHARED_NETWORK' || (this.config.sharedFolderSyncEnabled && this.config.sharedFolderPath);
     if (!isSharedActive || !this.config.sharedFolderPath) return;
 
     if (this.sharedSyncDebounceTimer) clearTimeout(this.sharedSyncDebounceTimer);
-    this.sharedSyncDebounceTimer = setTimeout(() => {
+    if (immediate) {
       this.syncToSharedFolderNetwork();
-    }, 500);
+    } else {
+      this.sharedSyncDebounceTimer = setTimeout(() => {
+        this.syncToSharedFolderNetwork();
+      }, 300);
+    }
   }
 
   /**
-   * Automatically write current database state to the specified Shared Network Folder path.
+   * Automatically write current database state directly to the specified Shared Network Folder path.
    */
   public async syncToSharedFolderNetwork(): Promise<{ success: boolean; message?: string }> {
     const isSharedActive = this.config.storageMode === 'SHARED_NETWORK' || (this.config.sharedFolderSyncEnabled && this.config.sharedFolderPath);
@@ -2548,7 +2561,7 @@ class DatabaseService {
   }
 
   /**
-   * Poll and pull updated database payload from the Shared Network Folder path if modified by another PC.
+   * Poll and pull updated database payload directly from the Shared Network Folder if modified.
    */
   public async pullFromSharedFolderNetwork(force = false): Promise<{ success: boolean; updated: boolean; message: string }> {
     const isSharedActive = this.config.storageMode === 'SHARED_NETWORK' || (this.config.sharedFolderSyncEnabled && this.config.sharedFolderPath);
@@ -2560,19 +2573,31 @@ class DatabaseService {
 
     this.isSyncingSharedNetwork = true;
     try {
-      const meta = await tauriBridge.readSharedMetaFile(this.config.sharedFolderPath);
-      if (!meta && !force) {
-        // If shared file doesn't exist yet on network share, push current local data to create it!
-        await this.syncToSharedFolderNetwork();
-        this.isSyncingSharedNetwork = false;
-        return { success: true, updated: true, message: 'Initialized shared network folder database with local catalog.' };
+      let meta = await tauriBridge.readSharedMetaFile(this.config.sharedFolderPath);
+
+      // If meta file is missing, check if the shared db file itself exists
+      if (!meta) {
+        const sharedDb = await tauriBridge.readSharedDatabaseFile(this.config.sharedFolderPath);
+        if (sharedDb && Array.isArray(sharedDb.masterItems)) {
+          meta = {
+            timestamp: sharedDb.updatedAt || new Date().toISOString(),
+            workstation: sharedDb.updatedByWorkstation || 'Remote-PC',
+            user: sharedDb.updatedByUser || 'QC Inspector',
+            masterItemsCount: sharedDb.masterItems.length,
+            registrationsCount: sharedDb.registrations?.length || 0
+          };
+        } else if (!force) {
+          // Folder exists but is empty / no db yet -> initialize with local catalog
+          await this.syncToSharedFolderNetwork();
+          this.isSyncingSharedNetwork = false;
+          return { success: true, updated: true, message: 'Initialized shared network folder database with current catalog.' };
+        }
       }
 
-      const myWorkstation = this.config.workstationName || realtimeSync.getCurrentUser().workstationName;
-      const isFromOtherPC = meta && meta.workstation && meta.workstation !== myWorkstation;
-      const isNewer = meta && meta.timestamp && meta.timestamp !== this.lastSharedSyncTimestamp;
+      // Detect if file on disk has changed
+      const hasTimestampChanged = meta && meta.timestamp && meta.timestamp !== this.lastSharedSyncTimestamp;
 
-      if (force || (isFromOtherPC && isNewer) || (!meta && force)) {
+      if (force || hasTimestampChanged || (!meta && force)) {
         const sharedDb = await tauriBridge.readSharedDatabaseFile(this.config.sharedFolderPath);
         if (sharedDb && Array.isArray(sharedDb.masterItems)) {
           this.masterItems = sharedDb.masterItems;
@@ -2582,7 +2607,7 @@ class DatabaseService {
             this.formTemplates = sharedDb.formTemplates;
           }
 
-          this.lastSharedSyncTimestamp = meta ? meta.timestamp : new Date().toISOString();
+          this.lastSharedSyncTimestamp = meta ? meta.timestamp : (sharedDb.updatedAt || new Date().toISOString());
           this.config = {
             ...this.config,
             lastSharedSyncTime: this.lastSharedSyncTimestamp || undefined,
@@ -2601,7 +2626,7 @@ class DatabaseService {
           return {
             success: true,
             updated: true,
-            message: `Successfully synchronized ${this.masterItems.length} items and ${this.registrations.length} registrations from shared network folder (${meta?.workstation || 'Peer PC'}).`
+            message: `Loaded ${this.masterItems.length} items and ${this.registrations.length} registrations from shared folder (${meta?.workstation || 'Network'}).`
           };
         }
       }
@@ -2616,12 +2641,52 @@ class DatabaseService {
   }
 
   /**
-   * Start background polling timer to monitor shared folder updates from peer PCs.
+   * One-click configuration to link and synchronize directly to a Shared Network Folder.
+   */
+  public async setSharedNetworkMode(
+    enabled: boolean,
+    folderPath?: string
+  ): Promise<{ success: boolean; message: string }> {
+    await this.init();
+    const cleanPath = (folderPath ?? this.config.sharedFolderPath ?? '').trim();
+
+    if (enabled && !cleanPath) {
+      return { success: false, message: 'Please provide a shared folder path (e.g. Z:\\ or \\\\SERVER\\Share).' };
+    }
+
+    this.config = {
+      ...this.config,
+      storageMode: enabled ? 'SHARED_NETWORK' : 'LOCAL',
+      sharedFolderSyncEnabled: enabled,
+      sharedFolderPath: cleanPath,
+      autoSyncIntervalSec: this.config.autoSyncIntervalSec || 2
+    };
+
+    this.saveLocalConfig();
+
+    if (enabled) {
+      this.startSharedNetworkPolling();
+      const pullRes = await this.pullFromSharedFolderNetwork(true);
+      return {
+        success: true,
+        message: `Connected to shared database at "${cleanPath}". ${pullRes.message}`
+      };
+    } else {
+      if (this.sharedSyncPollingTimer) clearInterval(this.sharedSyncPollingTimer);
+      return {
+        success: true,
+        message: 'Switched to Standalone Local Mode (beside EXE).'
+      };
+    }
+  }
+
+  /**
+   * Start background polling timer to monitor shared folder updates from peer PCs (every 2 seconds).
    */
   public startSharedNetworkPolling(): void {
     if (this.sharedSyncPollingTimer) clearInterval(this.sharedSyncPollingTimer);
 
-    const intervalSec = this.config.autoSyncIntervalSec || 3;
+    const intervalSec = this.config.autoSyncIntervalSec || 2;
     this.sharedSyncPollingTimer = setInterval(() => {
       const isSharedActive = this.config.storageMode === 'SHARED_NETWORK' || (this.config.sharedFolderSyncEnabled && this.config.sharedFolderPath);
       if (isSharedActive) {
